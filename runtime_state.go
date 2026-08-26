@@ -726,9 +726,9 @@ func (r *Runtime) barTimes() (time.Time, time.Time, time.Time) {
 	var open time.Time
 
 	timeKey := "time"
-	times, err := r.getSeries(r.activeSymbol, timeKey)
+	myTime := r.valueAt(r.activeSymbol, timeKey, 0)
 
-	if err != nil || times.Length() == 0 {
+	if math.IsNaN(myTime) || myTime == 0 {
 		// infer time from bar index and bar step
 		base := r.startTime
 		if base.IsZero() {
@@ -740,7 +740,7 @@ func (r *Runtime) barTimes() (time.Time, time.Time, time.Time) {
 		open = base.Add(time.Duration(idx) * r.barStep).UTC()
 	} else {
 		// get time from the "time" series
-		open = time.UnixMilli(int64(times.Last(idx))).UTC()
+		open = time.UnixMilli(int64(myTime))
 	}
 
 	close := open.Add(r.barStep)

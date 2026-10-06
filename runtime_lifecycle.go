@@ -25,6 +25,7 @@ func (r *Runtime) Release() {
 	r.seriesExprByName = nil
 	r.seriesExprResolving = nil
 	r.indicatorState = nil
+	r.varValues = nil
 	r.extremaState = nil
 	r.valueTypesBySymbol = nil
 	r.loadSeries = nil
@@ -100,6 +101,7 @@ func newRuntime(
 		seriesExprByName:    map[string]*Expr{},
 		seriesExprResolving: map[string]bool{},
 		indicatorState:      map[string]interface{}{},
+		varValues:           map[*Stmt]interface{}{},
 		extremaState:        map[extremaStateKey]*extremaIndicatorState{},
 		valueTypesBySymbol:  valueTypesBySymbol,
 		loadSeries:          loadSeries,

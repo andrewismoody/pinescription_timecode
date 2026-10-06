@@ -246,7 +246,7 @@ func (p *parser) arrowFollowsParenGroup() bool {
 
 func (p *parser) parseDecl() (Stmt, error) {
 	k := p.next().Text
-	stmt := Stmt{Kind: "decl", Const: k == "const"}
+	stmt := Stmt{Kind: "decl", Const: k == "const", IsVar: k == "var" || k == "varip"}
 	save := p.pos
 	if p.match(tokIdent) {
 		if typeName, err := p.consumeTypeAnnotation(); err == nil && p.match(tokIdent) {

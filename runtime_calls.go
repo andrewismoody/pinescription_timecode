@@ -536,8 +536,8 @@ func (r *Runtime) callScriptFunction(fn FunctionDef, rawArgs []*Expr, args []int
 	}
 	var last interface{}
 	hasLast := false
-	for _, stmt := range fn.Body {
-		fl, err := r.execStmt(stmt)
+	for i := range fn.Body {
+		fl, err := r.execStmt(&fn.Body[i])
 		if err != nil {
 			return nil, err
 		}

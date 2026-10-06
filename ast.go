@@ -56,6 +56,7 @@ type Stmt struct {
 	Name       string   `json:"name,omitempty"`
 	TypeName   string   `json:"type_name,omitempty"`
 	Const      bool     `json:"const,omitempty"`
+	IsVar      bool     `json:"is_var,omitempty"`
 	Expr       *Expr    `json:"expr,omitempty"`
 	Target     *Expr    `json:"target,omitempty"`
 	TupleNames []string `json:"tuple_names,omitempty"`

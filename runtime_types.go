@@ -111,6 +111,7 @@ type Runtime struct {
 	seriesExprByName    map[string]*Expr
 	seriesExprResolving map[string]bool
 	indicatorState      map[string]interface{}
+	varValues           map[*Stmt]interface{}
 	extremaState        map[extremaStateKey]*extremaIndicatorState
 	valueTypesBySymbol  map[string]map[string]bool
 	loadSeries          func(symbol, valueType string) (SeriesExtended, error)

@@ -45,8 +45,8 @@ func (r *Runtime) commitBar() error {
 func (r *Runtime) execStmtList(stmts []Stmt) (flow, error) {
 	var last interface{}
 	hasLast := false
-	for _, stmt := range stmts {
-		fl, err := r.execStmt(stmt)
+	for i := range stmts {
+		fl, err := r.execStmt(&stmts[i])
 		if err != nil {
 			return flow{}, err
 		}
@@ -61,11 +61,23 @@ func (r *Runtime) execStmtList(stmts []Stmt) (flow, error) {
 	return flow{kind: flowNone, value: last, hasValue: hasLast}, nil
 }
 
-func (r *Runtime) execStmt(stmt Stmt) (flow, error) {
+func (r *Runtime) execStmt(stmt *Stmt) (flow, error) {
 	switch stmt.Kind {
 	case "decl":
 		if stmt.TypeName != "" && r.declaredTypes != nil {
 			r.declaredTypes[stmt.Name] = stmt.TypeName
+		}
+		if stmt.IsVar {
+			// var/varip initialize once; leave later mutations in the current scope untouched.
+			if cached, ok := r.varValues[stmt]; ok {
+				if _, exists := r.envStack[len(r.envStack)-1][stmt.Name]; exists {
+					return flow{kind: flowNone}, nil
+				}
+				if err := r.assign(stmt.Name, cached, stmt.Const, false); err != nil {
+					return flow{}, err
+				}
+				return flow{kind: flowNone}, nil
+			}
 		}
 		var v interface{}
 		if stmt.Expr != nil {
@@ -76,6 +88,9 @@ func (r *Runtime) execStmt(stmt Stmt) (flow, error) {
 			v = e
 		} else if stmt.TypeName == "bool" {
 			v = false
+		}
+		if stmt.IsVar {
+			r.varValues[stmt] = v
 		}
 		if err := r.assign(stmt.Name, v, stmt.Const, false); err != nil {
 			return flow{}, err
@@ -369,7 +384,7 @@ func (r *Runtime) execStmt(stmt Stmt) (flow, error) {
 	}
 }
 
-func (r *Runtime) execSwitch(stmt Stmt) (flow, error) {
+func (r *Runtime) execSwitch(stmt *Stmt) (flow, error) {
 	hasSwitchExpr := stmt.SwitchExpr != nil
 	var switchValue interface{}
 	if hasSwitchExpr {
@@ -602,7 +617,7 @@ func (r *Runtime) eval(expr *Expr) (interface{}, error) {
 
 func (r *Runtime) evalSwitchExpr(expr *Expr) (interface{}, error) {
 	stmt := Stmt{Kind: "switch", SwitchExpr: expr.SwitchExpr, Cases: expr.Cases, Default: expr.Default}
-	fl, err := r.execSwitch(stmt)
+	fl, err := r.execSwitch(&stmt)
 	if err != nil {
 		return nil, err
 	}

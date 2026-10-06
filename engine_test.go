@@ -242,10 +242,12 @@ var x = 1
 x = x + 2 * 3
 x
 `
+	// x persists across bars (var initializes once), so each bar's reassignment
+	// compounds on the prior bar's value: 1+6=7, 7+6=13, 13+6=19.
 	v := compileExec(t, script, 10, 11, 12)
 	f, ok := v.(float64)
-	if !ok || f != 7 {
-		t.Fatalf("expected 7, got %#v", v)
+	if !ok || f != 19 {
+		t.Fatalf("expected 19, got %#v", v)
 	}
 }
 
@@ -276,10 +278,13 @@ while k < 2
     k = k + 1
 s
 `
+	// s and k persist across bars (var initializes once): bar0 leaves s=12, k=2;
+	// bar1's for-loop adds 1+2+3+4=10 more (s=22) and the while loop is skipped
+	// since k is already 2.
 	v := compileExec(t, script, 1, 2)
 	f := v.(float64)
-	if f != 12 {
-		t.Fatalf("expected 12, got %v", f)
+	if f != 22 {
+		t.Fatalf("expected 22, got %v", f)
 	}
 }
 
@@ -562,6 +567,18 @@ a + b + c + d
 	}
 }
 
+func TestVarPersistsAcrossBars(t *testing.T) {
+	script := `
+var count = 0
+count := count + 1
+count
+`
+	v := compileExec(t, script, 1, 2, 3)
+	if v.(float64) != 3 {
+		t.Fatalf("expected 3, got %v", v)
+	}
+}
+
 func TestRecognizedButUnsupportedKeywords(t *testing.T) {
 	e := NewEngine()
 	e.RegisterMarketDataProvider(providerWithClose("AAA", 1, 2, 3))
@@ -672,10 +689,12 @@ diff
 }
 
 func TestBuiltInIndicators(t *testing.T) {
+	// No var here: these indicators must be recomputed every bar to build up
+	// their internal window/state, matching idiomatic Pine ta.* usage.
 	script := `
-var a = sma(close, 3)
-var b = ema(close, 3)
-var c = rsi(close, 3)
+a = sma(close, 3)
+b = ema(close, 3)
+c = rsi(close, 3)
 a + b + c
 `
 	v := compileExec(t, script, 10, 11, 12, 13, 14, 15)
@@ -1308,8 +1327,9 @@ y
 	if err != nil {
 		t.Fatalf("execute with runtime failed: %v", err)
 	}
-	if v.(float64) != 9 {
-		t.Fatalf("expected 9, got %v", v)
+	// x and y persist from bar 0 (close=5), so y stays 7 for the whole run.
+	if v.(float64) != 7 {
+		t.Fatalf("expected 7, got %v", v)
 	}
 	snap := rt.Snapshot()
 	if snap.ActiveSymbol != "AAA" {
@@ -1318,7 +1338,7 @@ y
 	if _, ok := snap.Variables["x"]; !ok {
 		t.Fatalf("snapshot missing x variable")
 	}
-	if got, ok := rt.Value("y"); !ok || got.(float64) != 9 {
+	if got, ok := rt.Value("y"); !ok || got.(float64) != 7 {
 		t.Fatalf("unexpected runtime y value: %#v", got)
 	}
 	if gotRt := e.Runtime(); gotRt == nil {
@@ -1334,9 +1354,10 @@ func TestSeriesHistoryIndexing(t *testing.T) {
 }
 
 func TestVariableHistoryIndexing(t *testing.T) {
+	// No var: x and y must be recomputed every bar so x[1] reflects the prior bar.
 	script := `
-var x = close
-var y = x[1]
+x = close
+y = x[1]
 nz(y)
 `
 	v := compileExec(t, script, 10, 20, 30)
@@ -1381,12 +1402,13 @@ p + bonus + bar_index
 }
 
 func TestMathAndTaNamespaceBuiltins(t *testing.T) {
+	// No var on `a`: ta.sma needs to be recomputed every bar to fill its window.
 	script := `
-var a = ta.sma(close, 2)
-var b = math.abs(-3)
-var c = math.pow(2, 3)
-var d = math.max(4, math.min(6, 5))
-var e = math.round(2.4)
+a = ta.sma(close, 2)
+b = math.abs(-3)
+c = math.pow(2, 3)
+d = math.max(4, math.min(6, 5))
+e = math.round(2.4)
 a + b + c + d + e
 `
 	v := compileExec(t, script, 1, 2, 3)
@@ -1396,8 +1418,9 @@ a + b + c + d + e
 }
 
 func TestTernaryOperator(t *testing.T) {
+	// No var: the ternary must be re-evaluated every bar as close changes.
 	script := `
-var x = close > 15 ? 10 : 1
+x = close > 15 ? 10 : 1
 x
 `
 	v := compileExec(t, script, 10, 20, 30)
@@ -1419,8 +1442,10 @@ func TestGenericExpressionHistoryIndexing(t *testing.T) {
 }
 
 func TestTACrossoverAndCrossunder(t *testing.T) {
+	// No var: crossover/crossunder need to be recomputed every bar to detect
+	// the transition, and up[1]/down[1] rely on that per-bar history.
 	upScript := `
-var up = ta.crossover(close, 1.5)
+up = ta.crossover(close, 1.5)
 up[1] ? 1 : 0
 `
 	up := compileExec(t, upScript, 1, 2, 3)
@@ -1429,7 +1454,7 @@ up[1] ? 1 : 0
 	}
 
 	downScript := `
-var down = ta.crossunder(close, 2.5)
+down = ta.crossunder(close, 2.5)
 down[1] ? 1 : 0
 `
 	down := compileExec(t, downScript, 3, 2, 1)
@@ -1577,8 +1602,8 @@ func TestEngineClearRuntimeAndRuntimeRelease(t *testing.T) {
 	e.SetDefaultSymbol("AAA")
 
 	b, err := e.Compile(`
-var x = close
-var y = x + close[1]
+x = close
+y = x + close[1]
 y
 `)
 	if err != nil {
@@ -1639,8 +1664,10 @@ s + a + n + x + med + mode + det + tr + t01 + p00 + c + sq
 }
 
 func TestMatrixModificationCoverage(t *testing.T) {
+	// No var on m: this is a one-shot mutation pipeline, not something meant to
+	// carry state across bars, so it must reset and rerun fully each bar.
 	script := `
-var m = matrix.new_float(2, 2, 1)
+m = matrix.new_float(2, 2, 1)
 m = matrix.add_row(m, [2, 2])
 m = matrix.add_col(m, [3, 3, 3])
 m = matrix.swap_rows(m, 0, 2)
@@ -1802,8 +1829,9 @@ s + av + f + l + li + mx + mx2 + mn + mn2 + med + mode + rg + pl + pn + pnt + pr
 }
 
 func TestArrayInsertMutatesPineArrayWithoutReassignment(t *testing.T) {
+	// No var on a: this is a one-shot mutation pipeline, so it must reset each bar.
 	v := compileExec(t, `
-var a = array.new_int(0)
+a = array.new_int(0)
 a = array.push(a, 1)
 a = array.push(a, 3)
 array.insert(a, 1, 2)
@@ -1815,10 +1843,13 @@ array.get(a, 1) * 10 + array.size(a)
 }
 
 func TestArrayDerivedArraysStayMutableWithoutReassignment(t *testing.T) {
+	// No var: a/b/c must be recreated fresh each bar, otherwise the bare
+	// array.push calls below (which always re-run every bar) would keep
+	// growing the same persisted arrays across bars.
 	v := compileExec(t, `
-var a = array.from(-1.0, -2.0)
-var b = array.copy(a)
-var c = array.abs(a)
+a = array.from(-1.0, -2.0)
+b = array.copy(a)
+c = array.abs(a)
 array.push(a, 3.0)
 array.push(b, 4.0)
 array.push(c, 5.0)
@@ -1849,11 +1880,13 @@ str.length(array.get(parts, 0)) + str.length(sub) + c + st + en
 }
 
 func TestTAChangeHighestLowestAndMathExtended(t *testing.T) {
+	// No var: ta.change/highest/lowest need to be recomputed every bar to
+	// build up their window across bars.
 	script := `
-var ch = ta.change(close, 2)
-var hi = ta.highest(close, 3)
-var lo = ta.lowest(close, 3)
-var m = math.log(math.exp(1)) + math.sin(0) + math.cos(0) + math.tan(0)
+ch = ta.change(close, 2)
+hi = ta.highest(close, 3)
+lo = ta.lowest(close, 3)
+m = math.log(math.exp(1)) + math.sin(0) + math.cos(0) + math.tan(0)
 ch + hi + lo + m
 `
 	v := compileExec(t, script, 10, 12, 11, 15)
@@ -1863,11 +1896,13 @@ ch + hi + lo + m
 }
 
 func TestTAStdevAndCorrelation(t *testing.T) {
+	// No var: ta.stdev/correlation need to be recomputed every bar to build
+	// up their window across bars.
 	script := `
-var s1 = ta.stdev(close, 4)
-var s2 = ta.stdev(close, 4, false)
-var c1 = ta.correlation(close, close * 2, 4)
-var c2 = ta.correlation(close, -close, 4)
+s1 = ta.stdev(close, 4)
+s2 = ta.stdev(close, 4, false)
+c1 = ta.correlation(close, close * 2, 4)
+c2 = ta.correlation(close, -close, 4)
 s1 + s2 + c1 + c2
 `
 	v := compileExec(t, script, 1, 2, 3, 4)
@@ -1877,20 +1912,21 @@ s1 + s2 + c1 + c2
 }
 
 func TestTAAdditionalFunctionsCoverage(t *testing.T) {
+	// No var: indicators need to be recomputed every bar to build up their window.
 	script := `
-var rma = ta.rma(close, 5)
-var wma = ta.wma(close, 5)
-var swma = ta.swma(close)
-var hma = ta.hma(close, 5)
-var alma = ta.alma(close, 5, 0.85, 6)
-var almaf = ta.alma(close, 5, 0.85, 6, true)
-var lr = ta.linreg(close, 5, 0)
-var cci = ta.cci(close, 5)
-var cmo = ta.cmo(close, 5)
-var cog = ta.cog(close, 5)
+rma = ta.rma(close, 5)
+wma = ta.wma(close, 5)
+swma = ta.swma(close)
+hma = ta.hma(close, 5)
+alma = ta.alma(close, 5, 0.85, 6)
+almaf = ta.alma(close, 5, 0.85, 6, true)
+lr = ta.linreg(close, 5, 0)
+cci = ta.cci(close, 5)
+cmo = ta.cmo(close, 5)
+cog = ta.cog(close, 5)
 [macdLine, signalLine, histLine] = ta.macd(close, 3, 6, 2)
-var ok = (na(rma) ? 0 : 1) + (na(wma) ? 0 : 2) + (na(swma) ? 0 : 4) + (na(hma) ? 0 : 8) + (na(alma) ? 0 : 16) + (na(almaf) ? 0 : 32) + (na(lr) ? 0 : 64) + (na(cci) ? 0 : 128) + (na(cmo) ? 0 : 256) + (na(cog) ? 0 : 512) + (na(macdLine) or na(signalLine) or na(histLine) ? 0 : 1024)
-var macdRel = math.abs((macdLine - signalLine) - histLine) < 0.000001 ? 2048 : 0
+ok = (na(rma) ? 0 : 1) + (na(wma) ? 0 : 2) + (na(swma) ? 0 : 4) + (na(hma) ? 0 : 8) + (na(alma) ? 0 : 16) + (na(almaf) ? 0 : 32) + (na(lr) ? 0 : 64) + (na(cci) ? 0 : 128) + (na(cmo) ? 0 : 256) + (na(cog) ? 0 : 512) + (na(macdLine) or na(signalLine) or na(histLine) ? 0 : 1024)
+macdRel = math.abs((macdLine - signalLine) - histLine) < 0.000001 ? 2048 : 0
 ok + macdRel
 `
 	v := compileExec(t, script, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
@@ -1926,11 +1962,12 @@ func TestTAVWMAWithVolumeSeries(t *testing.T) {
 }
 
 func TestTAPercentileFunctions(t *testing.T) {
+	// No var: percentile functions need to be recomputed every bar.
 	v := compileExec(t, `
-var p1 = ta.percentile_linear_interpolation(close, 5, 50)
-var p2 = ta.percentile_nearest_rank(close, 5, 50)
-var p3 = ta.percentrank(close, 5)
-var ok = (math.abs(p1 - 8) < 0.000001 ? 1 : 0) + (math.abs(p2 - 8) < 0.000001 ? 1 : 0) + (math.abs(p3 - 100) < 0.000001 ? 1 : 0)
+p1 = ta.percentile_linear_interpolation(close, 5, 50)
+p2 = ta.percentile_nearest_rank(close, 5, 50)
+p3 = ta.percentrank(close, 5)
+ok = (math.abs(p1 - 8) < 0.000001 ? 1 : 0) + (math.abs(p2 - 8) < 0.000001 ? 1 : 0) + (math.abs(p3 - 100) < 0.000001 ? 1 : 0)
 ok
 `, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 	if v.(float64) != 3 {
@@ -1989,18 +2026,18 @@ func TestTANextBatchIndicatorsFiniteAndRanges(t *testing.T) {
 
 	b, err := e.Compile(`
 [bbMid, bbUp, bbLow] = ta.bb(close, 5, 2)
-var bbw = ta.bbw(close, 5, 2)
+bbw = ta.bbw(close, 5, 2)
 [kcMid, kcUp, kcLow] = ta.kc(close, 5, 1.5)
-var kcw = ta.kcw(close, 5, 1.5)
-var stoch = ta.stoch(close, high, low, 5)
-var mfi = ta.mfi(close, 5)
-var tsi = ta.tsi(close, 5, 8)
-var wpr = ta.wpr(5)
+kcw = ta.kcw(close, 5, 1.5)
+stoch = ta.stoch(close, high, low, 5)
+mfi = ta.mfi(close, 5)
+tsi = ta.tsi(close, 5, 8)
+wpr = ta.wpr(5)
 [plusDI, minusDI, adx] = ta.dmi(5, 5)
-var sar = ta.sar(0.02, 0.02, 0.2)
+sar = ta.sar(0.02, 0.02, 0.2)
 [st, dir] = ta.supertrend(3, 5)
 
-var ok = 0
+ok = 0
 ok := ok + (na(bbMid) or na(bbUp) or na(bbLow) ? 0 : 1)
 ok := ok + (bbUp > bbMid and bbMid > bbLow ? 1 : 0)
 ok := ok + (na(bbw) ? 0 : 1)
@@ -2038,11 +2075,11 @@ func TestTABBAndBBWReferenceFormula(t *testing.T) {
 
 	b, err := e.Compile(`
 [bbMid, bbUp, bbLow] = ta.bb(close, 5, 2)
-var bbw = ta.bbw(close, 5, 2)
-var basis = ta.sma(close, 5)
-var dev = ta.stdev(close, 5)
+bbw = ta.bbw(close, 5, 2)
+basis = ta.sma(close, 5)
+dev = ta.stdev(close, 5)
 
-var ok = 0
+ok = 0
 ok := ok + (math.abs(bbMid - basis) < 0.0000000001 ? 1 : 0)
 ok := ok + (math.abs(bbUp - (basis + 2 * dev)) < 0.0000000001 ? 1 : 0)
 ok := ok + (math.abs(bbLow - (basis - 2 * dev)) < 0.0000000001 ? 1 : 0)
@@ -2078,7 +2115,7 @@ func TestDerivedPriceIdentifiersOHLC4Variants(t *testing.T) {
 	e.SetDefaultSymbol("AAA")
 
 	b, err := e.Compile(`
-var ok = 0
+ok := 0
 ok := ok + (math.abs(hl2 - ((high + low) / 2)) < 0.0000000001 ? 1 : 0)
 ok := ok + (math.abs(hlc3 - ((high + low + close) / 3)) < 0.0000000001 ? 1 : 0)
 ok := ok + (math.abs(hlcc4 - ((high + low + close + close) / 4)) < 0.0000000001 ? 1 : 0)
@@ -2119,26 +2156,26 @@ func TestTANextBatchUtilityFunctionsAndPivots(t *testing.T) {
 	e.SetDefaultSymbol("AAA")
 
 	b, err := e.Compile(`
-var bars = ta.barssince(close > 0)
-var cv = ta.cum(close)
-var vw = ta.valuewhen(close > 2, close, 0)
-var hb = ta.highestbars(high, 5)
-var lb = ta.lowestbars(low, 5)
-var mx = ta.max(close)
-var mn = ta.min(close)
-var med = ta.median(close, 5)
-var mode = ta.mode(close, 5)
-var rng = ta.range(close, 5)
-var vr = ta.variance(close, 5)
-var dv = ta.dev(close, 5)
-var rise = ta.rising(close, 5) ? 1 : 0
-var fall = ta.falling(close, 5) ? 1 : 0
-var trv = ta.tr()
-var x = ta.cross(close, ta.sma(close, 2)) ? 1 : 0
-var ph = ta.pivothigh(high, 2, 2)
-var pl = ta.pivotlow(low, 2, 2)
+bars = ta.barssince(close > 0)
+cv = ta.cum(close)
+vw = ta.valuewhen(close > 2, close, 0)
+hb = ta.highestbars(high, 5)
+lb = ta.lowestbars(low, 5)
+mx = ta.max(close)
+mn = ta.min(close)
+med = ta.median(close, 5)
+mode = ta.mode(close, 5)
+rng = ta.range(close, 5)
+vr = ta.variance(close, 5)
+dv = ta.dev(close, 5)
+rise = ta.rising(close, 5) ? 1 : 0
+fall = ta.falling(close, 5) ? 1 : 0
+trv = ta.tr()
+x = ta.cross(close, ta.sma(close, 2)) ? 1 : 0
+ph = ta.pivothigh(high, 2, 2)
+pl = ta.pivotlow(low, 2, 2)
 
-var ok = 0
+ok = 0
 ok := ok + (bars == 0 ? 1 : 0)
 ok := ok + (cv == 15 ? 1 : 0)
 ok := ok + (vw == 5 ? 1 : 0)
@@ -2218,16 +2255,16 @@ func TestTimeframeBuiltinsCoverage(t *testing.T) {
 	e.SetTimeframe("60")
 
 	b, err := e.Compile(`
-var period_match = timeframe.period == "60" ? 1 : 0
-var main_match = timeframe.main_period == "60" ? 1 : 0
-var mul = timeframe.multiplier
-var intraday = timeframe.isintraday ? 1 : 0
-var minutes = timeframe.isminutes ? 1 : 0
-var dwm = timeframe.isdwm ? 1 : 0
-var sec = timeframe.in_seconds()
-var from = timeframe.from_seconds(3600)
-var from_match = from == "60" ? 1 : 0
-var ch = timeframe.change("120") ? 1 : 0
+period_match = timeframe.period == "60" ? 1 : 0
+main_match = timeframe.main_period == "60" ? 1 : 0
+mul = timeframe.multiplier
+intraday = timeframe.isintraday ? 1 : 0
+minutes = timeframe.isminutes ? 1 : 0
+dwm = timeframe.isdwm ? 1 : 0
+sec = timeframe.in_seconds()
+from = timeframe.from_seconds(3600)
+from_match = from == "60" ? 1 : 0
+ch = timeframe.change("120") ? 1 : 0
 period_match + main_match + mul + intraday + minutes + dwm + sec + from_match + ch
 `)
 	if err != nil {
@@ -2282,21 +2319,21 @@ func TestMathSessionAndTimeBuiltinsFromEngineClock(t *testing.T) {
 	e.SetCurrentTime(now)
 
 	b, err := e.Compile(`
-var m = math.e + math.pi + math.phi + math.rphi
-var s = (session.extended == "extended" and session.regular == "regular") ? 1 : 0
-var tf = timeframe.isdaily ? 1 : 0
-var ticks = timeframe.isticks ? 1 : 0
-var t = time
-var tFn = time()
-var tc = time_close
-var tcFn = time_close()
-var tn = timenow
-var tnFn = timenow()
-var td = time_tradingday
-var tdFn = time_tradingday()
-var ts = timestamp(2025, 1, 1, 2, 0, 0)
-var tsz = timestamp("UTC+0", 2025, 1, 1, 3, 0, 0)
-var ok = (t == ts ? 1 : 0) + (tc == tsz ? 1 : 0) + (t == tFn ? 1 : 0) + (tc == tcFn ? 1 : 0) + (tn == tnFn ? 1 : 0) + (td == tdFn ? 1 : 0)
+m = math.e + math.pi + math.phi + math.rphi
+s = (session.extended == "extended" and session.regular == "regular") ? 1 : 0
+tf = timeframe.isdaily ? 1 : 0
+ticks = timeframe.isticks ? 1 : 0
+t = time
+tFn = time()
+tc = time_close
+tcFn = time_close()
+tn = timenow
+tnFn = timenow()
+td = time_tradingday
+tdFn = time_tradingday()
+ts = timestamp(2025, 1, 1, 2, 0, 0)
+tsz = timestamp("UTC+0", 2025, 1, 1, 3, 0, 0)
+ok = (t == ts ? 1 : 0) + (tc == tsz ? 1 : 0) + (t == tFn ? 1 : 0) + (tc == tcFn ? 1 : 0) + (tn == tnFn ? 1 : 0) + (td == tdFn ? 1 : 0)
 m + s + tf + ticks + ok
 `)
 	if err != nil {
